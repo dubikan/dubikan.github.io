@@ -1,0 +1,75 @@
+---
+title: 'Practical Machine Learning: Predicting Exercise Quality'
+author: "Dubi Kanengisser"
+date: "Thursday, March 19, 2015"
+output: html_document
+---
+
+This study examines data collected from six young healthy participants who were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E) (Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3Ut3bGe1K).
+
+In the present study we model the features extracted from these activities to predict type of exercise fashion, and examine which of the features are necessary for such a prediction.
+
+We begin with obtaining the data and cleaning it. The dataset includes a number of unnecessary variables, which we remove immediately. In addition, we use the Near Zero Variable function to determine while variables show little variablity, and remove these as well. Finally, we calculate correlations among all the remaining numeric variables, and use the results of this process to identify variables with very few observations. While these features may have predictive value, in the existing dataset they provide too little information to be of use, so we remove these as well.
+
+```{r cleaning, warning=FALSE,message=FALSE}
+require(caret)
+require(dplyr)
+require(randomForest)
+download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","pml-training.csv",method="auto")
+data<-read.csv("pml-training.csv",stringsAsFactors=FALSE)[,-c(1:7)]
+data$classe<-factor(data$classe)
+data[,sapply(data,class) %in% c("character","integer")]<-sapply(data[,sapply(data,class) %in% c("character","integer")],as.numeric)
+zero<-nearZeroVar(data[,-153],saveMetrics=TRUE)
+nzv<-c(zero$nzv,FALSE)
+data<-data[,!nzv]
+cors<-cor(data[,-118]) # calculate correlations among numeric variables
+cr<-sapply(data.frame(!is.na(data.frame(cors))),sum) # single out variables for which cor cannot be calculated
+data<-data[,cr>1] # remove these variables
+```
+
+We will now partition the dataset to create a training and testing set, and use a Random Forest procedure to generate the model.
+
+```{r model}
+set.seed(13131)
+inTrain<-createDataPartition(data$classe,p=0.7,list=FALSE)
+training<-data[inTrain,]
+testing<-data[-inTrain,]
+modelrf<-randomForest:::randomForest(classe~.,data=training)
+predrf<-predict(modelrf,newdata=training)
+confusionMatrix(data = predrf,reference = training$classe)
+```
+As can be seen from the confusion matrix, the model is perfectly accurate for this dataset.
+
+However, when examining the out-of-bag error prediction, we can see that we can expect an error rate of approximately half a percent (note that no cross verification is necessary in Random Forest). In the results shown below, we sample the error rate for different numbers of trees. We can see from both the plot and the numeric data that an error rate of approximately 0.006 is achieved with 100 trees, and subsequent improvement is slow.
+
+```{r error}
+randomForest:::plot.randomForest(modelrf)
+ooberr<-randomForest:::plot.randomForest(modelrf)
+data.frame(Trees=c(1,50,100,150,200,250,300,500),ErrorRate=ooberr[c(1,50,100,150,200,250,300,500)])
+```
+
+We will test this prediction using the testing dataset we created earlier.
+
+```{r testing}
+predtest<-predict(modelrf,newdata=testing)
+confusionMatrix(data = predtest,reference = testing$classe)
+```
+
+As we can see, the model achieves an accuracy rate of `r confusionMatrix(data = predtest,reference = testing$classe)$overall[1]`, which is concordant with the predicted error rate for the model.
+
+Finally, we examine the number of necessary features to achieve high accuracy rate. We do this using the Random Forest Cross Verification function.
+
+```{r rfcv}
+cv<-rfcv(training[,1:52],training$classe,cv.fold=3,scale="log",step=0.9)
+ggplot(data.frame(cv$n.var,cv$error.cv),aes(cv.n.var,cv.error.cv))+geom_point(size=4,color="dodgerblue4")+labs(title="Out-of-Bag Error by number of variables",x="Number of Variables used",y="Error rate")+theme(plot.title = element_text(size=20, face="bold", vjust=2))+geom_line(color="grey")
+```
+
+As we can see, there is little improvement in the model beyond the top ten features. We will now extract these features based on their importance Gini Index.
+
+```{r gini}
+arrange(top_n(data.frame(row.names(modelrf$importance),modelrf$importance),10),desc(MeanDecreaseGini))
+```
+
+## Conclusions
+
+The model created using 52 features has a very high accuracy late with expected error rate of approximately 0.5 percent. Very good results can also be achieved with a much simpler model using only 10 features. Measuring only these  ten variables can give a very strong indication of the fashion in which the exercise is carried out, and can be usefully used to alert users as to common errors them may be making in carrying out the exercise.
